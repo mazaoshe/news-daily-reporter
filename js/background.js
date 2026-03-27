@@ -42,33 +42,39 @@ let settings = {
 };
 
 let isRunning = false;
+let settingsReady = false;
+let settingsReadyPromise = null;
+
+function ensureSettingsLoaded() {
+  if (settingsReady) return Promise.resolve(settings);
+  if (settingsReadyPromise) return settingsReadyPromise;
+  settingsReadyPromise = new Promise((resolve) => {
+    chrome.storage.local.get(['settings'], (result) => {
+      const stored = result && result.settings ? result.settings : {};
+      settings = migrateSettings({ ...settings, ...stored });
+      chrome.storage.local.set({ settings }, () => {
+        settingsReady = true;
+        settingsReadyPromise = null;
+        resolve(settings);
+      });
+    });
+  });
+  return settingsReadyPromise;
+}
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(['settings'], (result) => {
-    if (result.settings) {
-      settings = { ...settings, ...result.settings };
-    }
-    settings = migrateSettings(settings);
-    chrome.storage.local.set({ settings });
-    scheduleTask();
-  });
+  ensureSettingsLoaded().then(() => scheduleTask());
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.storage.local.get(['settings'], (result) => {
-    if (result.settings) {
-      settings = { ...settings, ...result.settings };
-    }
-    settings = migrateSettings(settings);
-    chrome.storage.local.set({ settings });
-    scheduleTask();
-  });
+  ensureSettingsLoaded().then(() => scheduleTask());
 });
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.settings) {
     settings = { ...settings, ...changes.settings.newValue };
     settings = migrateSettings(settings);
+    settingsReady = true;
     scheduleTask();
   }
 });
@@ -133,7 +139,10 @@ function scheduleTask() {
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'dailyReport' && !isRunning) generateDailyReport({ trigger: 'alarm' });
+  if (alarm.name !== 'dailyReport') return;
+  ensureSettingsLoaded().then(() => {
+    if (!isRunning) generateDailyReport({ trigger: 'alarm' });
+  });
 });
 
 function isDuplicate(link) {
@@ -1114,16 +1123,20 @@ async function sendToTelegram(message) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'generateReport') {
-    generateDailyReport({ trigger: 'manual' }).then(function() { sendResponse({ success: true }); }).catch(function(err) { sendResponse({ success: false, error: err.message }); });
+    ensureSettingsLoaded()
+      .then(() => generateDailyReport({ trigger: 'manual' }))
+      .then(function() { sendResponse({ success: true }); })
+      .catch(function(err) { sendResponse({ success: false, error: err.message }); });
     return true;
   }
-  if (message.action === 'getSettings') { sendResponse(settings); return true; }
-  if (message.action === 'getStatus') { sendResponse({ isRunning: isRunning }); return true; }
+  if (message.action === 'getSettings') { ensureSettingsLoaded().then(() => sendResponse(settings)); return true; }
+  if (message.action === 'getStatus') { ensureSettingsLoaded().then(() => sendResponse({ isRunning: isRunning })); return true; }
   if (message.action === 'clearHistory') {
-    settings.collectedLinks = [];
-    settings.collectedTime = {};
-    chrome.storage.local.set({ settings });
-    sendResponse({ success: true });
+    ensureSettingsLoaded().then(() => {
+      settings.collectedLinks = [];
+      settings.collectedTime = {};
+      chrome.storage.local.set({ settings }, () => sendResponse({ success: true }));
+    });
     return true;
   }
 });
