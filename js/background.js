@@ -62,6 +62,17 @@ function ensureSettingsLoaded() {
   return settingsReadyPromise;
 }
 
+function setSettings(patch) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['settings'], (result) => {
+      const base = migrateSettings({ ...settings, ...(result && result.settings ? result.settings : {}) });
+      const updated = migrateSettings({ ...base, ...(patch || {}) });
+      settings = updated;
+      chrome.storage.local.set({ settings: updated }, () => resolve(updated));
+    });
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   ensureSettingsLoaded().then(() => scheduleTask());
 });
@@ -131,8 +142,7 @@ function scheduleTask() {
     }
 
     const nextRunTime = nextTarget.getTime();
-    settings.nextRunTime = nextRunTime;
-    chrome.storage.local.set({ settings });
+    setSettings({ nextRunTime });
 
     chrome.alarms.create('dailyReport', { when: nextRunTime, periodInMinutes: 1440 });
   });
@@ -158,8 +168,7 @@ function addToHistory(links) {
   const now = Date.now();
   const times = settings.collectedTime || {};
   links.forEach(link => { if (link) times[link] = now; });
-  settings.collectedTime = times;
-  chrome.storage.local.set({ settings });
+  setSettings({ collectedTime: times });
 }
 
 function normalizeLink(link) {
@@ -314,13 +323,11 @@ async function generateDailyReport(opts) {
   const execId = Date.now();
   console.log('[每日运营] 开始生成日报, ID:', execId);
   const trigger = opts && opts.trigger ? String(opts.trigger) : 'unknown';
-  console.log('[每日运营] 触发来源:', trigger);
-  settings.lastAttemptTime = Date.now();
+  await setSettings({ lastAttemptTime: Date.now() });
   chrome.storage.local.set({ settings });
   
   try {
     const collectedData = await collectAllData();
-    console.log('[每日运营] 采集完成:', collectedData.length, '条');
     
     const deduped = collectedData
       .map(item => ({ ...item, link: normalizeLink(item.link) }))
@@ -364,8 +371,7 @@ async function generateDailyReport(opts) {
     const newLinks = newItems.map(item => item.link).filter(l => l);
     addToHistory(newLinks);
     
-    settings.lastReportTime = Date.now();
-    chrome.storage.local.set({ settings });
+    await setSettings({ lastReportTime: Date.now() });
     console.log('[每日运营] 任务完成');
   } catch (error) {
     console.error('[每日运营] 失败:', error);
@@ -1132,11 +1138,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'getSettings') { ensureSettingsLoaded().then(() => sendResponse(settings)); return true; }
   if (message.action === 'getStatus') { ensureSettingsLoaded().then(() => sendResponse({ isRunning: isRunning })); return true; }
   if (message.action === 'clearHistory') {
-    ensureSettingsLoaded().then(() => {
-      settings.collectedLinks = [];
-      settings.collectedTime = {};
-      chrome.storage.local.set({ settings }, () => sendResponse({ success: true }));
-    });
+    ensureSettingsLoaded().then(() => setSettings({ collectedLinks: [], collectedTime: {} }).then(() => sendResponse({ success: true })));
     return true;
   }
 });
