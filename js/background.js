@@ -173,7 +173,8 @@ function addToHistory(links) {
 
 function normalizeLink(link) {
   if (!link) return '';
-  const cleaned = String(link).trim().split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
+  const raw = String(link || '').trim().replace(/^['"`]+|['"`]+$/g, '');
+  const cleaned = raw.split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
   const article = cleaned.match(/^https:\/\/api\.zhihu\.com\/articles\/(\d+)(?:\/)?$/);
   if (article) return 'https://zhuanlan.zhihu.com/p/' + article[1];
   const question = cleaned.match(/^https:\/\/api\.zhihu\.com\/questions\/(\d+)(?:\/)?$/);
@@ -981,19 +982,20 @@ async function generateAIReport(data) {
     '- zhihu: ' + (focus.zhihu || []).join('、') + '\n' +
     '- x: ' + (focus.x || []).join('、') + '\n' +
     '- reddit: ' + (focus.reddit || []).join('、') + '\n\n' +
-    '请只返回JSON，不要返回Markdown代码块，不要额外解释。\n' +
+    '输入可能包含中文或英文，请双语判断相关性；所有简介与总结请使用中文。\n' +
+    '请只返回JSON，不要返回Markdown代码块，不要额外解释，不要在链接外包裹引号或反引号。\n' +
     'JSON格式：\n' +
     '{\n' +
     '  "items": [\n' +
-    '    { "title": "标题", "intro": "一句话简介", "link": "https://...", "source": "zhihu|x|reddit" }\n' +
+    '    { "title": "标题", "intro": "用中文的一句话简介", "link": "https://...", "source": "zhihu|x|reddit" }\n' +
     '  ],\n' +
-    '  "summary": "一句话今日总结"\n' +
+    '  "summary": "用中文的一句话今日总结"\n' +
     '}\n\n' +
     '要求：\n' +
     '1. items长度必须在5到10之间（不足5条时，允许稍微放宽标准补足到5条，但不能超过10条）。\n' +
     '2. 对每条内容，必须使用该条内容的来源(source)对应的关键词来判断相关性。\n' +
-    '3. intro必须基于我提供的简介信息改写，不要胡编。\n' +
-    '4. link必须使用我提供的原始链接。\n' +
+    '3. intro必须基于我提供的简介信息改写，不要胡编；intro与summary必须使用中文。\n' +
+    '4. link必须使用我提供的原始链接，且不要添加引号或反引号。\n' +
     '5. 按相关度优先，其次参考热度。\n\n' +
     '待筛选内容：\n' + dataList;
 
