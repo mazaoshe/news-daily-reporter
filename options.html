@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>每日运营日报 - 设置</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; background: #f5f5f5; }
+    .container { max-width: 500px; margin: 0 auto; }
+    h1 { font-size: 20px; margin-bottom: 20px; }
+    section { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    section h2 { font-size: 16px; margin-bottom: 16px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; }
+    .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #2196f3; }
+    .help-text { font-size: 12px; color: #999; margin-top: 8px; }
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; margin-right: 10px; }
+    textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; resize: vertical; font-family: inherit; }
+    .btn-success { background: #4caf50; color: white; }
+    .btn-secondary { background: #e0e0e0; color: #333; }
+    .btn-danger { background: #f44336; color: white; }
+    .topic-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .topic-tag { display: inline-flex; align-items: center; background: #e3f2fd; color: #1976d2; padding: 6px 12px; border-radius: 16px; font-size: 13px; }
+    .topic-tag .remove { margin-left: 6px; cursor: pointer; color: #1976d2; font-weight: bold; }
+    .topic-input-group { display: flex; gap: 8px; align-items: center; }
+    .status-info { background: #fff3e0; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .status-info strong { color: #e65100; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ 每日运营日报 - 设置</h1>
+    
+    <div class="status-info" id="statusInfo">
+      已收集链接: <strong id="collectedCount">0</strong> 条
+    </div>
+    
+    <section>
+      <h2>定时任务</h2>
+      <div class="form-group">
+        <label><input type="checkbox" id="enabled" checked> 启用定时任务</label>
+      </div>
+      <div class="form-group">
+        <label>执行时间 (小时，0-23)</label>
+        <input type="number" id="hour" min="0" max="23" value="9">
+      </div>
+      <div class="form-group">
+        <label>执行时间 (分钟，0-59)</label>
+        <input type="number" id="minute" min="0" max="59" value="0">
+      </div>
+      <div class="form-group">
+        <label>去重周期 (天)</label>
+        <input type="number" id="dedupDays" min="1" max="30" value="7">
+      </div>
+    </section>
+    
+    <section>
+      <h2>知乎关键词</h2>
+      <p class="help-text">这些关键词用于知乎采集与筛选</p>
+      <div class="topic-input-group" style="margin-top: 12px;">
+        <input type="text" id="topicInput" placeholder="输入关键词，如: AI、科技">
+        <button id="addTopicBtn" class="btn btn-secondary">添加</button>
+      </div>
+      <div class="topic-tags" id="topicTags"></div>
+    </section>
+
+    <section>
+      <h2>X 关键词</h2>
+      <div class="form-group">
+        <label>关键词</label>
+        <input type="text" id="xKeywords" placeholder="如: AI, startups, productivity">
+        <p class="help-text">逗号分隔，用于X采集与筛选</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>采集平台</h2>
+      <div class="form-group">
+        <label><input type="checkbox" id="sourceZhihu" checked> 知乎</label>
+        <p class="help-text">通过站内搜索采集候选内容</p>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="sourceX"> X</label>
+        <p class="help-text">通过搜索采集（可能需要登录，否则结果为空）</p>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="sourceReddit"> Reddit</label>
+        <p class="help-text">从订阅社区获取热点（需要登录reddit，否则可能为空）</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Reddit 配置</h2>
+      <div class="form-group">
+        <label><input type="checkbox" id="redditUseSubscriptions" checked> 使用我订阅的社区</label>
+        <p class="help-text">从 /subreddits/mine/subscriber/ 读取订阅列表</p>
+      </div>
+      <div class="form-group">
+        <label>额外社区 (可选)</label>
+        <input type="text" id="redditSubreddits" placeholder="如: ObsidianMD, productivity">
+        <p class="help-text">逗号分隔，支持写 r/xxx</p>
+      </div>
+      <div class="form-group">
+        <label>Reddit 关键词</label>
+        <input type="text" id="redditKeywords" placeholder="如: obsidian, PKM">
+        <p class="help-text">逗号分隔，只作用于Reddit内容</p>
+      </div>
+    </section>
+    
+    <section>
+      <h2>Telegram 配置</h2>
+      <div class="form-group">
+        <label>Bot Token (从 @BotFather 获取)</label>
+        <input type="text" id="telegramToken" placeholder="123456:ABC-DEF...">
+      </div>
+      <div class="form-group">
+        <label>Chat ID (从 @userinfobot 获取)</label>
+        <input type="text" id="telegramChatId" placeholder="Your Chat ID">
+      </div>
+    </section>
+    
+    <section>
+      <h2>AI 配置</h2>
+      <div class="form-group">
+        <label>AI 模型</label>
+        <select id="aiModel">
+          <option value="deepseek-chat">DeepSeek (推荐)</option>
+          <option value="gpt-3.5-turbo">OpenAI GPT-3.5</option>
+          <option value="gpt-4">OpenAI GPT-4</option>
+          <option value="claude-3-sonnet">Claude 3</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>API URL</label>
+        <input type="text" id="aiApiUrl" placeholder="DeepSeek: https://api.deepseek.com/v1/chat/completions">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" id="aiApiKey" placeholder="sk-...">
+      </div>
+      <p class="help-text">推荐使用 DeepSeek，价格便宜效果好</p>
+    </section>
+    
+    <section>
+      <h2>AI Prompt (可选)</h2>
+      <div class="form-group">
+        <label>自定义 Prompt</label>
+        <textarea id="aiPrompt" rows="6" placeholder="留空使用默认Prompt，自动筛选匹配标签的内容&#10;&#10;自定义示例：&#10;你是一个内容分析师，请从以下内容中筛选与「AI、科技」相关的内容，&#10;按热度排序，每条给出简短点评，最后总结趋势。"></textarea>
+      </div>
+      <p class="help-text">留空使用默认Prompt：自动筛选匹配关注标签的内容并返回链接</p>
+    </section>
+    
+    <section>
+      <h2>数据管理</h2>
+      <button id="clearHistoryBtn" class="btn btn-danger" style="margin-top: 10px;">清除历史记录</button>
+    </section>
+    
+    <div>
+      <button id="saveBtn" class="btn btn-success">保存设置</button>
+      <button id="testBtn" class="btn btn-secondary">测试发送</button>
+    </div>
+  </div>
+  <script src="js/options.js"></script>
+</body>
+</html>

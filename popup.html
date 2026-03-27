@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>每日运营日报</title>
+  <link rel="stylesheet" href="css/popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 每日运营日报</h1>
+      <p class="subtitle">多平台采集</p>
+    </header>
+    
+    <main>
+      <section class="status-section">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span class="status-text">等待执行</span>
+        </div>
+        <button id="generateBtn" class="btn btn-primary">立即采集</button>
+      </section>
+      
+      <section class="info-section">
+        <div class="info-item">
+          <span class="info-label">执行时间:</span>
+          <span class="info-value" id="execTime">每天 9:00</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">状态:</span>
+          <span class="info-value" id="taskStatus">已设置定时</span>
+        </div>
+      </section>
+      
+      <section class="topics-section">
+        <h2>📌 平台与关键词</h2>
+        <div class="topics-list" id="sourcesList">知乎</div>
+        <div class="topics-list" id="keywordsList" style="margin-top: 8px;">知乎: AI、科技</div>
+      </section>
+      
+      <section class="config-section">
+        <h2>⚙️ 采集平台</h2>
+        <div class="form-group">
+          <label><input type="checkbox" id="sourceZhihuPopup" checked> 知乎</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="sourceXPopup"> X</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="sourceRedditPopup"> Reddit</label>
+        </div>
+        <div class="actions">
+          <button id="saveSourcesBtn" class="btn btn-primary">保存平台</button>
+        </div>
+      </section>
+      
+      <div class="actions">
+        <button id="openOptionsBtn" class="btn btn-success">打开设置</button>
+      </div>
+    </main>
+  </div>
+  <script src="js/popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "每日运营日报生成器",
+  "version": "1.0.0",
+  "description": "定时采集X、知乎、公众号数据，AI生成日报并通过Telegram推送",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "notifications"
+  ],
+  "host_permissions": [
+    "*://x.com/*",
+    "*://twitter.com/*",
+    "*://www.zhihu.com/*",
+    "*://www.reddit.com/*",
+    "*://mp.weixin.qq.com/*"
+  ],
+  "background": {
+    "service_worker": "js/background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}
