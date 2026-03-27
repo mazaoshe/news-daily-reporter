@@ -108,27 +108,28 @@ function migrateSettings(s) {
 }
 
 function scheduleTask() {
-  chrome.alarms.clearAll();
-  if (!settings.enabled || isRunning) return;
-  
-  const now = new Date();
-  const todayTarget = new Date(now);
-  todayTarget.setHours(settings.hour, settings.minute || 0, 0, 0);
+  chrome.alarms.clear('dailyReport', () => {
+    if (!settings.enabled || isRunning) return;
 
-  const nowMs = now.getTime();
-  const todayTargetMs = todayTarget.getTime();
+    const now = new Date();
+    const todayTarget = new Date(now);
+    todayTarget.setHours(settings.hour, settings.minute || 0, 0, 0);
 
-  let nextTarget = todayTarget;
-  if (todayTargetMs <= nowMs) {
-    nextTarget = new Date(todayTargetMs);
-    nextTarget.setDate(nextTarget.getDate() + 1);
-  }
+    const nowMs = now.getTime();
+    const todayTargetMs = todayTarget.getTime();
 
-  const nextRunTime = nextTarget.getTime();
-  settings.nextRunTime = nextRunTime;
-  chrome.storage.local.set({ settings });
+    let nextTarget = todayTarget;
+    if (todayTargetMs <= nowMs) {
+      nextTarget = new Date(todayTargetMs);
+      nextTarget.setDate(nextTarget.getDate() + 1);
+    }
 
-  chrome.alarms.create('dailyReport', { when: nextRunTime, periodInMinutes: 1440 });
+    const nextRunTime = nextTarget.getTime();
+    settings.nextRunTime = nextRunTime;
+    chrome.storage.local.set({ settings });
+
+    chrome.alarms.create('dailyReport', { when: nextRunTime, periodInMinutes: 1440 });
+  });
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
