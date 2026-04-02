@@ -45,7 +45,7 @@ let isRunning = false;
 let settingsReady = false;
 let settingsReadyPromise = null;
 
-function ensureSettingsLoaded() {
+function ensureSettingsLoaded () {
   if (settingsReady) return Promise.resolve(settings);
   if (settingsReadyPromise) return settingsReadyPromise;
   settingsReadyPromise = new Promise((resolve) => {
@@ -62,7 +62,7 @@ function ensureSettingsLoaded() {
   return settingsReadyPromise;
 }
 
-function setSettings(patch) {
+function setSettings (patch) {
   return new Promise((resolve) => {
     chrome.storage.local.get(['settings'], (result) => {
       const base = migrateSettings({ ...settings, ...(result && result.settings ? result.settings : {}) });
@@ -90,9 +90,9 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-function migrateSettings(s) {
+function migrateSettings (s) {
   const merged = { ...s };
-  function coerceBool(v, defaultValue) {
+  function coerceBool (v, defaultValue) {
     if (v === true || v === false) return v;
     if (v === 'true') return true;
     if (v === 'false') return false;
@@ -124,7 +124,7 @@ function migrateSettings(s) {
   return merged;
 }
 
-function scheduleTask() {
+function scheduleTask () {
   chrome.alarms.clear('dailyReport', () => {
     if (!settings.enabled || isRunning) return;
 
@@ -155,7 +155,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   });
 });
 
-function isDuplicate(link) {
+function isDuplicate (link) {
   const now = Date.now();
   const times = settings.collectedTime || {};
   const dedupDays = settings.dedupDays || CONFIG.DEDUP_DAYS;
@@ -164,14 +164,14 @@ function isDuplicate(link) {
   return false;
 }
 
-function addToHistory(links) {
+function addToHistory (links) {
   const now = Date.now();
   const times = settings.collectedTime || {};
   links.forEach(link => { if (link) times[link] = now; });
   setSettings({ collectedTime: times });
 }
 
-function normalizeLink(link) {
+function normalizeLink (link) {
   if (!link) return '';
   const raw = String(link || '').trim().replace(/^['"`]+|['"`]+$/g, '');
   const cleaned = raw.split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
@@ -186,7 +186,7 @@ function normalizeLink(link) {
   return cleaned;
 }
 
-function pickSearchQueries(topics) {
+function pickSearchQueries (topics) {
   const raw = Array.isArray(topics) ? topics : [];
   const cleaned = raw.map(t => String(t || '').trim()).filter(Boolean);
   const uniq = [];
@@ -221,7 +221,7 @@ function pickSearchQueries(topics) {
   return final;
 }
 
-function scoreItem(item, topics) {
+function scoreItem (item, topics) {
   const title = String(item.title || '').toLowerCase();
   const excerpt = String(item.excerpt || '').toLowerCase();
   let score = 0;
@@ -240,7 +240,7 @@ function scoreItem(item, topics) {
   return score;
 }
 
-function chooseBestItems(items, topics, limit) {
+function chooseBestItems (items, topics, limit) {
   const list = Array.isArray(items) ? items : [];
   const normalizedTopics = Array.isArray(topics) ? topics : [];
   const scored = list.map(it => ({ it, score: scoreItem(it, normalizedTopics) }));
@@ -248,19 +248,19 @@ function chooseBestItems(items, topics, limit) {
   return scored.slice(0, limit).map(s => s.it);
 }
 
-function waitForTabComplete(tabId, timeoutMs) {
+function waitForTabComplete (tabId, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
       reject(new Error('等待页面加载超时'));
     }, timeoutMs);
 
-    function cleanup() {
+    function cleanup () {
       clearTimeout(timeout);
       chrome.tabs.onUpdated.removeListener(onUpdated);
     }
 
-    function onUpdated(updatedTabId, changeInfo) {
+    function onUpdated (updatedTabId, changeInfo) {
       if (updatedTabId !== tabId) return;
       if (changeInfo.status === 'complete') {
         cleanup();
@@ -272,25 +272,25 @@ function waitForTabComplete(tabId, timeoutMs) {
   });
 }
 
-function delay(ms) {
+function delay (ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function throttledDelay(multiplier) {
+function throttledDelay (multiplier) {
   const m = typeof multiplier === 'number' && multiplier > 0 ? multiplier : 1;
   const base = CONFIG.REQUEST_BASE_DELAY_MS;
   const jitter = Math.floor(Math.random() * CONFIG.REQUEST_JITTER_MS);
   return delay(Math.floor((base + jitter) * m));
 }
 
-function isInCooldown(source) {
+function isInCooldown (source) {
   const now = Date.now();
   const map = settings.sourceCooldownUntil || {};
   const until = map[source] || 0;
   return until > now;
 }
 
-function setCooldown(source, ms) {
+function setCooldown (source, ms) {
   const now = Date.now();
   const until = now + (typeof ms === 'number' && ms > 0 ? ms : CONFIG.COOLDOWN_MS);
   const map = settings.sourceCooldownUntil || {};
@@ -299,7 +299,7 @@ function setCooldown(source, ms) {
   chrome.storage.local.set({ settings });
 }
 
-function detectBlockedText(text) {
+function detectBlockedText (text) {
   const t = String(text || '');
   if (!t) return false;
   return (
@@ -313,65 +313,91 @@ function detectBlockedText(text) {
   );
 }
 
-async function generateDailyReport(opts) {
+async function generateDailyReport (opts) {
   if (isRunning) {
     console.log('[每日运营] 任务进行中，跳过');
     return;
   }
   isRunning = true;
-  
-  // 添加执行中的标识
+
   const execId = Date.now();
-  console.log('[每日运营] 开始生成日报, ID:', execId);
+  console.log('[每日运营] 开始生成日报，ID:', execId);
+
   const trigger = opts && opts.trigger ? String(opts.trigger) : 'unknown';
-  await setSettings({ lastAttemptTime: Date.now() });
+  await setSettings({ lastAttemptTime: Date.now(), sourceCooldownUntil: {} });
   chrome.storage.local.set({ settings });
-  
+
   try {
+    // 1. 收集所有数据（保留平台标识）
     const collectedData = await collectAllData();
-    
+
+    // 2. 去重处理
     const deduped = collectedData
       .map(item => ({ ...item, link: normalizeLink(item.link) }))
       .filter(item => item.link && !isDuplicate(item.link));
 
-    let newItems = deduped;
-    console.log('[每日运营] 去重后使用:', newItems.length, '条');
-    
-    if (newItems.length === 0) {
+    console.log('[每日运营] 去重后共:', deduped.length, '条');
+
+    if (deduped.length === 0) {
       console.log('[每日运营] 无数据');
       isRunning = false;
       scheduleTask();
       return;
     }
-    
-    const topicsForScore = settings.topics || CONFIG.DEFAULT_TOPICS;
-    newItems = chooseBestItems(newItems, topicsForScore, 80);
-    if (newItems.length > 60) newItems = newItems.slice(0, 60);
-    
-    console.log('[AI配置] apiKey:', settings.aiApiKey ? '有' : '无');
-    console.log('[AI配置] apiUrl:', settings.aiApiUrl ? '有' : '无');
-    
-    var report;
-    if (settings.aiApiKey && settings.aiApiUrl) {
-      console.log('[AI] 开始生成...');
-      try {
-        report = await generateAIReport(newItems);
-        console.log('[AI] 生成成功');
-      } catch (e) {
-        console.log('[AI生成失败]:', e.message);
-        report = generateSimpleReport(newItems);
-      }
-    } else {
-      console.log('[日报] 使用简单格式');
-      const topicsForScore = settings.topics || CONFIG.DEFAULT_TOPICS;
-      report = generateSimpleReport(chooseBestItems(newItems, topicsForScore, 10));
-    }
-    
-    await sendToTelegram(report);
 
-    const newLinks = newItems.map(item => item.link).filter(l => l);
-    addToHistory(newLinks);
-    
+    // 3. 按平台分组
+    const groupedBySource = {};
+    deduped.forEach(item => {
+      const source = item.source || 'unknown';
+      if (!groupedBySource[source]) {
+        groupedBySource[source] = [];
+      }
+      groupedBySource[source].push(item);
+    });
+
+    // 4. 遍历每个平台，单独生成并发送报告
+    const sources = Object.keys(groupedBySource);
+    for (const source of sources) {
+      const items = groupedBySource[source];
+      console.log(`[每日运营] 处理平台：${source}, 数量：${items.length}`);
+
+      if (items.length === 0) continue;
+
+      // 5. 选择最佳项目（按平台）
+      const topicsForScore = settings.platformKeywords?.[source] || settings.topics || CONFIG.DEFAULT_TOPICS;
+      const selectedItems = chooseBestItems(items, topicsForScore, 60);
+
+      // 6. 生成报告（按平台）
+      let report;
+      if (settings.aiApiKey && settings.aiApiUrl) {
+        try {
+          report = await generateAIReport(selectedItems, source);
+        } catch (e) {
+          console.log(`[AI 生成失败][${source}]:`, e.message);
+          report = generateSimpleReport(selectedItems, source);
+        }
+      } else {
+        report = generateSimpleReport(selectedItems, source);
+      }
+
+      // 7. 发送到 Telegram（每个平台单独发送）
+      try {
+        await sendToTelegram(report);
+        console.log(`[每日运营][${source}] 发送成功`);
+      } catch (e) {
+        console.error(`[每日运营][${source}] 发送失败:`, e.message);
+      }
+
+      // 8. 记录历史（按平台）
+      const newLinks = selectedItems.map(item => item.link).filter(l => l);
+      addToHistory(newLinks);
+
+      // 9. 平台间延迟，避免刷屏
+      if (sources.indexOf(source) < sources.length - 1) {
+        await delay(2000);
+      }
+    }
+
     await setSettings({ lastReportTime: Date.now() });
     console.log('[每日运营] 任务完成');
   } catch (error) {
@@ -382,14 +408,13 @@ async function generateDailyReport(opts) {
   }
 }
 
-async function collectAllData() {
+async function collectAllData () {
   const sources = settings.sources || { zhihu: true, x: false, reddit: false };
   const pk = settings.platformKeywords || {};
   const zhihuKeywords = Array.isArray(pk.zhihu) ? pk.zhihu : (settings.topics || ['AI', '人工智能', '科技', '个人成长']);
   const xKeywords = Array.isArray(pk.x) ? pk.x : [];
 
   let allResults = [];
-
   if (sources.zhihu !== false) {
     if (isInCooldown('zhihu')) {
       console.log('[采][知乎] 处于冷却期，跳过');
@@ -432,7 +457,7 @@ async function collectAllData() {
   return uniqueResults;
 }
 
-async function collectRedditData() {
+async function collectRedditData () {
   let allResults = [];
   let penalty = 1.6;
 
@@ -461,7 +486,7 @@ async function collectRedditData() {
   return allResults;
 }
 
-async function getRedditSubreddits(useSubscriptions, configuredSubs) {
+async function getRedditSubreddits (useSubscriptions, configuredSubs) {
   const cleanedConfigured = (Array.isArray(configuredSubs) ? configuredSubs : [])
     .map(s => String(s || '').trim().replace(/^r\//i, ''))
     .filter(Boolean);
@@ -488,7 +513,7 @@ async function getRedditSubreddits(useSubscriptions, configuredSubs) {
   return merged;
 }
 
-async function scrapeRedditSubscriptions() {
+async function scrapeRedditSubscriptions () {
   return new Promise((resolve) => {
     const url = 'https://www.reddit.com/subreddits/mine/subscriber/';
     chrome.tabs.create({ url, active: false }, (tab) => {
@@ -501,8 +526,8 @@ async function scrapeRedditSubscriptions() {
       waitForTabComplete(tab.id, 20000).then(() => {
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: function() {
-            function uniqLower(arr) {
+          func: function () {
+            function uniqLower (arr) {
               var out = [];
               var seen = {};
               for (var i = 0; i < arr.length; i++) {
@@ -530,7 +555,7 @@ async function scrapeRedditSubscriptions() {
 
             return uniqLower(candidates);
           }
-        }, function(injectionResults) {
+        }, function (injectionResults) {
           let subs = [];
           if (injectionResults && injectionResults[0]) subs = injectionResults[0].result || [];
           chrome.tabs.remove(tab.id);
@@ -544,7 +569,7 @@ async function scrapeRedditSubscriptions() {
   });
 }
 
-async function fetchRedditHot(subreddit, limit) {
+async function fetchRedditHot (subreddit, limit) {
   const sub = String(subreddit || '').trim().replace(/^r\//i, '');
   if (!sub) return [];
   const lim = typeof limit === 'number' && limit > 0 ? limit : 8;
@@ -584,7 +609,7 @@ async function fetchRedditHot(subreddit, limit) {
   return results;
 }
 
-async function collectZhihuData(keywords) {
+async function collectZhihuData (keywords) {
   let allResults = [];
   const queries = pickSearchQueries(keywords).slice(0, CONFIG.MAX_ZHIHU_QUERIES);
   let penalty = 1;
@@ -612,7 +637,7 @@ async function collectZhihuData(keywords) {
   return allResults;
 }
 
-async function collectXData(keywords) {
+async function collectXData (keywords) {
   let allResults = [];
   const queries = pickSearchQueries(keywords).slice(0, CONFIG.MAX_X_QUERIES);
   let penalty = 1.5;
@@ -639,7 +664,7 @@ async function collectXData(keywords) {
   return allResults;
 }
 
-async function scrapeZhihuSearch(keyword, offsets) {
+async function scrapeZhihuSearch (keyword, offsets) {
   return new Promise((resolve) => {
     const searchUrl = 'https://www.zhihu.com/search?type=content&q=' + encodeURIComponent(keyword);
     chrome.tabs.create({ url: searchUrl, active: false }, (tab) => {
@@ -648,16 +673,16 @@ async function scrapeZhihuSearch(keyword, offsets) {
         resolve([]);
         return;
       }
-      
+
       console.log('[采] 打开搜索页:', tab.id, keyword);
-      
+
       waitForTabComplete(tab.id, 12000).then(() => {
         console.log('[采] 注入采集脚本...');
 
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: async function(kw, offs) {
-            function detectBlockedInPage() {
+          func: async function (kw, offs) {
+            function detectBlockedInPage () {
               var title = String(document.title || '');
               var bodyText = String(document.body && document.body.innerText || '');
               return (
@@ -670,7 +695,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
               );
             }
 
-            function normalizeLinkInPage(link) {
+            function normalizeLinkInPage (link) {
               if (!link) return '';
               var cleaned = String(link).trim().split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
               var article = cleaned.match(/^https:\/\/api\.zhihu\.com\/articles\/(\d+)(?:\/)?$/);
@@ -684,11 +709,11 @@ async function scrapeZhihuSearch(keyword, offsets) {
               return cleaned;
             }
 
-            function stripTags(s) {
+            function stripTags (s) {
               return String(s || '').replace(/<[^>]+>/g, '').trim();
             }
 
-            function safeGet(obj, path) {
+            function safeGet (obj, path) {
               try {
                 var cur = obj;
                 for (var i = 0; i < path.length; i++) cur = cur[path[i]];
@@ -698,7 +723,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
               }
             }
 
-            function buildLinkFromObject(obj) {
+            function buildLinkFromObject (obj) {
               var type = String(obj && obj.type || '');
               if (obj && obj.url && typeof obj.url === 'string') return normalizeLinkInPage(obj.url);
               if (type === 'question' && obj.id) return 'https://www.zhihu.com/question/' + obj.id;
@@ -712,7 +737,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
               return '';
             }
 
-            function toItem(entry) {
+            function toItem (entry) {
               var obj = entry && (entry.object || entry.object_info || entry.target || entry);
               var highlight = entry && entry.highlight || {};
 
@@ -738,7 +763,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
               return { title: title, excerpt: excerpt || '无简介', link: link, hot: '搜索: ' + kw };
             }
 
-            async function fetchSearchPage(offset) {
+            async function fetchSearchPage (offset) {
               var url = '/api/v4/search_v3?t=general&q=' + encodeURIComponent(kw) + '&correction=1&offset=' + offset + '&limit=20&lc_idx=0&show_all_topics=0';
               var resp = await fetch(url, { credentials: 'include' });
               if (resp.status === 429 || resp.status === 403) {
@@ -779,7 +804,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
 
             for (var s = 0; s < 5; s++) {
               window.scrollTo(0, document.body.scrollHeight);
-              await new Promise(function(r) { setTimeout(r, 450); });
+              await new Promise(function (r) { setTimeout(r, 450); });
             }
 
             var items = document.querySelectorAll('.ContentItem, .SearchResult-Card, .Card');
@@ -824,7 +849,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
             return { blocked: false, items: fallbackResults };
           },
           args: [keyword, Array.isArray(offsets) ? offsets : [0]]
-        }, function(injectionResults) {
+        }, function (injectionResults) {
           console.log('[采] 注入完成');
 
           var rawData = [];
@@ -857,7 +882,7 @@ async function scrapeZhihuSearch(keyword, offsets) {
   });
 }
 
-async function scrapeXSearch(keyword) {
+async function scrapeXSearch (keyword) {
   return new Promise((resolve) => {
     const searchUrl = 'https://x.com/search?q=' + encodeURIComponent(keyword) + '&src=typed_query&f=top';
     chrome.tabs.create({ url: searchUrl, active: false }, (tab) => {
@@ -870,8 +895,8 @@ async function scrapeXSearch(keyword) {
       waitForTabComplete(tab.id, 20000).then(() => {
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: async function(kw) {
-            function isBlockedPage() {
+          func: async function (kw) {
+            function isBlockedPage () {
               var t = String(document.body && document.body.innerText || '');
               var title = String(document.title || '');
               return (
@@ -882,7 +907,7 @@ async function scrapeXSearch(keyword) {
               );
             }
 
-            function normalizeXLink(href) {
+            function normalizeXLink (href) {
               if (!href) return '';
               var cleaned = String(href).trim().split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
               if (cleaned.startsWith('/')) cleaned = 'https://x.com' + cleaned;
@@ -898,7 +923,7 @@ async function scrapeXSearch(keyword) {
 
             for (var s = 0; s < 5; s++) {
               window.scrollTo(0, document.body.scrollHeight);
-              await new Promise(function(r) { setTimeout(r, 700); });
+              await new Promise(function (r) { setTimeout(r, 700); });
             }
 
             var tweets = document.querySelectorAll('article[data-testid="tweet"]');
@@ -931,7 +956,7 @@ async function scrapeXSearch(keyword) {
             return { blocked: false, items: results };
           },
           args: [keyword]
-        }, function(injectionResults) {
+        }, function (injectionResults) {
           var rawData = [];
           var blocked = false;
           if (injectionResults && injectionResults[0]) {
@@ -958,33 +983,52 @@ async function scrapeXSearch(keyword) {
   });
 }
 
-async function generateAIReport(data) {
+async function generateAIReport (data, source = 'all') {
   const sources = settings.sources || { zhihu: true, x: false, reddit: false };
   const pk = settings.platformKeywords || {};
   const focus = {};
-  if (sources.zhihu !== false) focus.zhihu = Array.isArray(pk.zhihu) ? pk.zhihu : (settings.topics || CONFIG.DEFAULT_TOPICS);
-  if (sources.x) focus.x = Array.isArray(pk.x) ? pk.x : [];
-  if (sources.reddit) focus.reddit = Array.isArray(pk.reddit) ? pk.reddit : (settings.redditKeywords || ['obsidian']);
 
-  const topics = Object.keys(focus).map(function(k) {
+  // 只处理当前平台
+  if (source !== 'all') {
+    if (source === 'zhihu' && sources.zhihu !== false) {
+      focus.zhihu = Array.isArray(pk.zhihu) ? pk.zhihu : (settings.topics || CONFIG.DEFAULT_TOPICS);
+    }
+    if (source === 'x' && sources.x) {
+      focus.x = Array.isArray(pk.x) ? pk.x : [];
+    }
+    if (source === 'reddit' && sources.reddit) {
+      focus.reddit = Array.isArray(pk.reddit) ? pk.reddit : (settings.redditKeywords || ['obsidian']);
+    }
+  } else {
+    // 原有逻辑（所有平台）
+    if (sources.zhihu !== false) focus.zhihu = Array.isArray(pk.zhihu) ? pk.zhihu : (settings.topics || CONFIG.DEFAULT_TOPICS);
+    if (sources.x) focus.x = Array.isArray(pk.x) ? pk.x : [];
+    if (sources.reddit) focus.reddit = Array.isArray(pk.reddit) ? pk.reddit : (settings.redditKeywords || ['obsidian']);
+  }
+
+  const topics = Object.keys(focus).map(function (k) {
     const list = Array.isArray(focus[k]) ? focus[k] : [];
     return k.toUpperCase() + ': ' + list.join('、');
   }).join(' | ') || 'AI、科技';
+
   const customPrompt = settings.aiPrompt || '';
-  
-  // 构建数据列表，包含title, hot, excerpt和link
-  const dataList = data.map(function(item, i) {
-    return (i+1) + '. 来源: ' + (item.source || '') + '\n   标题: ' + item.title + '\n   热度: ' + item.hot + '\n   简介: ' + item.excerpt + '\n   链接: ' + item.link;
+
+  // 构建数据列表
+  const dataList = data.map(function (item, i) {
+    return (i + 1) + '. 来源：' + (item.source || '') + '\n   标题：' + item.title + '\n   热度：' + item.hot + '\n   简介：' + item.excerpt + '\n   链接：' + item.link;
   }).join('\n\n');
-  
-  const defaultPrompt = '你是一个高级内容筛选助手。请从以下多平台内容中筛选出与关注关键词相关的内容。\n\n' +
+
+  // 修复：使用传入的 source 参数
+  const sourceLabel = source === 'all' ? '多平台' : (source === 'zhihu' ? '知乎' : source === 'x' ? 'X' : source === 'reddit' ? 'Reddit' : source.toUpperCase());
+
+  const defaultPrompt = '你是一个高级内容筛选助手。请从以下' + sourceLabel + '平台内容中筛选出与关注关键词相关的内容。\n\n' +
     '不同来源的关注关键词如下：\n' +
     '- zhihu: ' + (focus.zhihu || []).join('、') + '\n' +
     '- x: ' + (focus.x || []).join('、') + '\n' +
     '- reddit: ' + (focus.reddit || []).join('、') + '\n\n' +
     '输入可能包含中文或英文，请双语判断相关性；所有简介与总结请使用中文。\n' +
-    '请只返回JSON，不要返回Markdown代码块，不要额外解释，不要在链接外包裹引号或反引号。\n' +
-    'JSON格式：\n' +
+    '请只返回 JSON，不要返回 Markdown 代码块，不要额外解释，不要在链接外包裹引号或反引号。\n' +
+    'JSON 格式：\n' +
     '{\n' +
     '  "items": [\n' +
     '    { "title": "标题", "intro": "用中文的一句话简介", "link": "https://...", "source": "zhihu|x|reddit" }\n' +
@@ -992,10 +1036,10 @@ async function generateAIReport(data) {
     '  "summary": "用中文的一句话今日总结"\n' +
     '}\n\n' +
     '要求：\n' +
-    '1. items长度必须在5到10之间（不足5条时，允许稍微放宽标准补足到5条，但不能超过10条）。\n' +
-    '2. 对每条内容，必须使用该条内容的来源(source)对应的关键词来判断相关性。\n' +
-    '3. intro必须基于我提供的简介信息改写，不要胡编；intro与summary必须使用中文。\n' +
-    '4. link必须使用我提供的原始链接，且不要添加引号或反引号。\n' +
+    '1. items 长度必须在 5 到 10 之间（不足 5 条时，允许稍微放宽标准补足到 5 条，但不能超过 10 条）。\n' +
+    '2. 对每条内容，必须使用该条内容的来源 (source) 对应的关键词来判断相关性。\n' +
+    '3. intro 必须基于我提供的简介信息改写，不要胡编；intro 与 summary 必须使用中文。\n' +
+    '4. link 必须使用我提供的原始链接，且不要添加引号或反引号。\n' +
     '5. 按相关度优先，其次参考热度。\n\n' +
     '待筛选内容：\n' + dataList;
 
@@ -1007,21 +1051,21 @@ async function generateAIReport(data) {
     const response = await fetch(settings.aiApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.aiApiKey },
-      body: JSON.stringify({ 
-        model: settings.aiModel || 'deepseek-chat', 
-        messages: [{ role: 'user', content: prompt }], 
-        temperature: 0.7, 
-        max_tokens: 1000 
+      body: JSON.stringify({
+        model: settings.aiModel || 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000
       })
     });
-    
+
     const result = await response.json();
     console.log('[AI] 响应:', JSON.stringify(result));
-    
+
     if (result.error) {
-      throw new Error(result.error.message || 'API错误');
+      throw new Error(result.error.message || 'API 错误');
     }
-    
+
     if (result.choices && result.choices[0]) {
       const aiContent = String(result.choices[0].message.content || '').trim();
       let parsed = null;
@@ -1036,23 +1080,24 @@ async function generateAIReport(data) {
         parsed = null;
       }
 
-      const header = '📊 每日运营日报\n📌 关注: ' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n━━━━━━━━━━━━━\n\n';
+      // 修复：标题中使用 sourceLabel
+      const header = '📊 每日运营日报 - ' + sourceLabel + '\n📌 关注：' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n━━━━━━━━━━━━━\n\n';
 
       if (!parsed || !Array.isArray(parsed.items)) {
         return header + aiContent;
       }
 
       let items = parsed.items
-        .map(function(x) {
+        .map(function (x) {
           const title = String(x?.title || '').trim();
           const intro = String(x?.intro || '').trim();
           const link = normalizeLink(String(x?.link || '').trim());
           return { title, intro, link };
         })
-        .filter(function(x) { return x.title && x.link; });
+        .filter(function (x) { return x.title && x.link; });
 
       const seen = new Set();
-      items = items.filter(function(x) {
+      items = items.filter(function (x) {
         if (seen.has(x.link)) return false;
         seen.add(x.link);
         return true;
@@ -1061,7 +1106,7 @@ async function generateAIReport(data) {
       if (items.length > 10) items = items.slice(0, 10);
 
       if (items.length < 5) {
-        const topicsForScore = settings.topics || CONFIG.DEFAULT_TOPICS;
+        const topicsForScore = settings.platformKeywords?.[source] || settings.topics || CONFIG.DEFAULT_TOPICS;
         const fallback = chooseBestItems(data, topicsForScore, 12);
         for (const it of fallback) {
           if (items.length >= 5) break;
@@ -1077,7 +1122,7 @@ async function generateAIReport(data) {
       }
 
       let body = '';
-      items.forEach(function(it, idx) {
+      items.forEach(function (it, idx) {
         body += '【' + (idx + 1) + '】' + it.title + '\n';
         body += '简介：' + (it.intro || '无简介') + '\n';
         body += '链接：' + it.link + '\n\n';
@@ -1088,42 +1133,46 @@ async function generateAIReport(data) {
 
       return header + body.trim();
     } else {
-      throw new Error('AI返回格式异常');
+      throw new Error('AI 返回格式异常');
     }
   } catch (e) {
-    console.error('[AI生成失败]:', e);
+    console.error('[AI 生成失败]:', e);
     throw e;
   }
 }
 
-function generateSimpleReport(data) {
-  const topics = settings.topics?.join('、') || 'AI、科技';
-  var report = '📊 每日运营日报\n📌 关注: ' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n';
-  
-  data.forEach(function(item, i) {
-    if (i >= 10) return; // 限制最多输出10条
-    report += (i+1) + '. ' + item.title + '\n';
-    report += '   简介: ' + (item.excerpt || '无简介') + '\n';
-    if (item.link) report += '   链接: ' + item.link + '\n';
-    if (item.hot) report += '   热度: ' + item.hot + '\n';
+function generateSimpleReport (data, source = 'all') {
+  const sourceTopics = settings.platformKeywords?.[source];
+  const topics = (sourceTopics && Array.isArray(sourceTopics) ? sourceTopics : settings.topics)?.join('、') || 'AI、科技';
+
+  const sourceLabel = source === 'all' ? '多平台汇总' : (source === 'zhihu' ? '知乎' : source === 'x' ? 'X' : source === 'reddit' ? 'Reddit' : source.toUpperCase());
+
+  var report = '📊 每日运营日报 - ' + sourceLabel + '\n📌 关注：' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n';
+
+  data.forEach(function (item, i) {
+    if (i >= 10) return;
+    report += (i + 1) + '. ' + item.title + '\n';
+    report += '   简介：' + (item.excerpt || '无简介') + '\n';
+    if (item.link) report += '   链接：' + item.link + '\n';
+    if (item.hot) report += '   热度：' + item.hot + '\n';
     report += '\n';
   });
-  
-  report += '💡 配置AI可生成智能分析';
+
+  report += '💡 配置 AI 可生成智能分析';
   return report;
 }
 
-async function sendToTelegram(message) {
+async function sendToTelegram (message) {
   if (!settings.telegramBotToken || !settings.telegramChatId) {
     throw new Error('Telegram配置未设置');
   }
-  
+
   const response = await fetch('https://api.telegram.org/bot' + settings.telegramBotToken + '/sendMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: settings.telegramChatId, text: message })
   });
-  
+
   const result = await response.json();
   if (!result.ok) throw new Error(result.description);
   return result;
@@ -1133,8 +1182,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'generateReport') {
     ensureSettingsLoaded()
       .then(() => generateDailyReport({ trigger: 'manual' }))
-      .then(function() { sendResponse({ success: true }); })
-      .catch(function(err) { sendResponse({ success: false, error: err.message }); });
+      .then(function () { sendResponse({ success: true }); })
+      .catch(function (err) { sendResponse({ success: false, error: err.message }); });
     return true;
   }
   if (message.action === 'getSettings') { ensureSettingsLoaded().then(() => sendResponse(settings)); return true; }
