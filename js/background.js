@@ -1176,9 +1176,14 @@ async function generateAIReport (data, source = 'all') {
 
   const customPrompt = settings.aiPrompt || '';
 
-  // 构建数据列表
-  const dataList = data.map(function (item, i) {
-    return (i + 1) + '. 来源：' + (item.source || '') + '\n   标题：' + item.title + '\n   热度：' + item.hot + '\n   简介：' + item.excerpt + '\n   链接：' + item.link;
+  const aiInput = Array.isArray(data) ? data.slice(0, 30) : [];
+
+  const dataList = aiInput.map(function (item, i) {
+    const title = String(item.title || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const excerpt = String(item.excerpt || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const link = String(item.link || '').trim();
+    const hot = String(item.hot || '').trim();
+    return (i + 1) + '. 来源：' + (item.source || '') + '\n   标题：' + title + '\n   热度：' + hot + '\n   简介：' + excerpt + '\n   链接：' + link;
   }).join('\n\n');
 
   // 修复：使用传入的 source 参数
@@ -1201,7 +1206,7 @@ async function generateAIReport (data, source = 'all') {
     '要求：\n' +
     '1. items 长度必须在 5 到 10 之间（不足 5 条时，允许稍微放宽标准补足到 5 条，但不能超过 10 条）。\n' +
     '2. 对每条内容，必须使用该条内容的来源 (source) 对应的关键词来判断相关性。\n' +
-    '3. intro 必须基于我提供的简介信息改写，不要胡编；intro 与 summary 必须使用中文。\n' +
+    '3. intro 必须基于我提供的简介信息改写，不要胡编；intro 与 summary 必须使用中文；intro 请控制在 40 字以内。\n' +
     '4. link 必须使用我提供的原始链接，且不要添加引号或反引号。\n' +
     '5. 按相关度优先，其次参考热度。\n\n' +
     '待筛选内容：\n' + dataList;
@@ -1217,8 +1222,8 @@ async function generateAIReport (data, source = 'all') {
       body: JSON.stringify({
         model: settings.aiModel || 'deepseek-chat',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-        max_tokens: 1000
+        temperature: 0.6,
+        max_tokens: 1600
       })
     });
 
@@ -1231,23 +1236,84 @@ async function generateAIReport (data, source = 'all') {
 
     if (result.choices && result.choices[0]) {
       const aiContent = String(result.choices[0].message.content || '').trim();
-      let parsed = null;
-      try {
-        const cleaned = aiContent
+
+      function stripFences (s) {
+        return String(s || '')
           .replace(/^```json\s*/i, '')
           .replace(/^```\s*/i, '')
           .replace(/```$/i, '')
           .trim();
-        parsed = JSON.parse(cleaned);
-      } catch (e) {
-        parsed = null;
       }
+
+      function removeTrailingCommas (s) {
+        return String(s || '').replace(/,\s*([}\]])/g, '$1');
+      }
+
+      function findBalanced (s, openChar, closeChar, startIdx) {
+        var i = typeof startIdx === 'number' ? startIdx : 0;
+        var depth = 0;
+        var inStr = false;
+        var esc = false;
+        for (; i < s.length; i++) {
+          var ch = s[i];
+          if (inStr) {
+            if (esc) { esc = false; continue; }
+            if (ch === '\\') { esc = true; continue; }
+            if (ch === '"') inStr = false;
+            continue;
+          }
+          if (ch === '"') { inStr = true; continue; }
+          if (ch === openChar) depth++;
+          if (ch === closeChar) {
+            depth--;
+            if (depth === 0) return i;
+          }
+        }
+        return -1;
+      }
+
+      function tryParseAIJson (rawText) {
+        var cleaned = stripFences(rawText);
+        try {
+          return JSON.parse(cleaned);
+        } catch (e) {}
+
+        var objStart = cleaned.indexOf('{');
+        if (objStart >= 0) {
+          var objEnd = findBalanced(cleaned, '{', '}', objStart);
+          if (objEnd > objStart) {
+            var objText = cleaned.slice(objStart, objEnd + 1);
+            try {
+              return JSON.parse(removeTrailingCommas(objText));
+            } catch (e) {}
+          }
+        }
+
+        var itemsMatch = cleaned.match(/"items"\s*:\s*\[/);
+        if (itemsMatch) {
+          var itemsStart = cleaned.indexOf('[', itemsMatch.index);
+          if (itemsStart >= 0) {
+            var itemsEnd = findBalanced(cleaned, '[', ']', itemsStart);
+            if (itemsEnd > itemsStart) {
+              var arrText = cleaned.slice(itemsStart, itemsEnd + 1);
+              try {
+                var arr = JSON.parse(removeTrailingCommas(arrText));
+                return { items: Array.isArray(arr) ? arr : [], summary: '' };
+              } catch (e) {}
+            }
+          }
+        }
+
+        return null;
+      }
+
+      let parsed = tryParseAIJson(aiContent);
 
       // 修复：标题中使用 sourceLabel
       const header = '📊 每日运营日报 - ' + sourceLabel + '\n📌 关注：' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n━━━━━━━━━━━━━\n\n';
 
       if (!parsed || !Array.isArray(parsed.items)) {
-        return header + aiContent;
+        return header + generateSimpleReport(aiInput.length ? aiInput : data, source);
       }
 
       let items = parsed.items
@@ -1270,7 +1336,7 @@ async function generateAIReport (data, source = 'all') {
 
       if (items.length < 5) {
         const topicsForScore = settings.platformKeywords?.[source] || settings.topics || CONFIG.DEFAULT_TOPICS;
-        const fallback = chooseBestItems(data, topicsForScore, 12);
+        const fallback = chooseBestItems(aiInput.length ? aiInput : data, topicsForScore, 12);
         for (const it of fallback) {
           if (items.length >= 5) break;
           const link = normalizeLink(it.link);
