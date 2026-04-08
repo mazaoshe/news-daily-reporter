@@ -665,7 +665,7 @@ async function collectZhihuData (keywords) {
 
   if (allResults.length === 0) {
     try {
-      const hot = await fetchZhihuHotlist(60);
+      const hot = await scrapeZhihuRecommendFromHome(40);
       const kw = Array.isArray(keywords) ? keywords.map(k => String(k || '').trim()).filter(Boolean) : [];
       if (kw.length === 0) return hot.map(r => ({ ...r, source: 'zhihu' }));
 
@@ -686,40 +686,118 @@ async function collectZhihuData (keywords) {
   return allResults;
 }
 
-async function fetchZhihuHotlist (limit) {
-  const lim = typeof limit === 'number' && limit > 0 ? limit : 50;
-  const url = 'https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=' + lim + '&desktop=true';
-  const resp = await fetch(url, { method: 'GET', credentials: 'include' });
-  if (resp.status === 429 || resp.status === 403) {
-    setCooldown('zhihu', CONFIG.COOLDOWN_MS);
-    throw new Error('知乎访问受限: ' + resp.status);
-  }
-  const json = await resp.json();
-  const data = json && Array.isArray(json.data) ? json.data : [];
+async function scrapeZhihuRecommendFromHome (limit) {
+  return new Promise((resolve) => {
+    const url = 'https://www.zhihu.com/';
+    chrome.tabs.create({ url, active: false }, (tab) => {
+      if (chrome.runtime.lastError) {
+        resolve([]);
+        return;
+      }
 
-  const results = [];
-  const seen = new Set();
-  for (const entry of data) {
-    const target = entry && entry.target ? entry.target : null;
-    if (!target) continue;
-    const title = String(target.title || target.name || '').trim();
-    if (!title) continue;
-    const link = normalizeLink(String(target.url || '').trim());
-    if (!link) continue;
-    if (seen.has(link)) continue;
-    seen.add(link);
+      waitForTabComplete(tab.id, 15000).then(() => {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: function (lim) {
+            function detectBlockedInPage () {
+              var title = String(document.title || '');
+              var bodyText = String(document.body && document.body.innerText || '');
+              return (
+                title.includes('验证') ||
+                title.includes('安全') ||
+                bodyText.includes('暂时限制本次访问') ||
+                bodyText.includes('访问存在异常') ||
+                bodyText.includes('验证') ||
+                bodyText.includes('机器人')
+              );
+            }
 
-    let excerpt = String(target.excerpt || target.excerpt_new || target.description || '').trim();
-    excerpt = excerpt.replace(/\n/g, ' ').replace(/\s+/g, ' ').substring(0, 180);
+            function normalizeLinkInPage (link) {
+              if (!link) return '';
+              var raw = String(link || '').trim().replace(/^['"`]+|['"`]+$/g, '');
+              var cleaned = raw.split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
+              if (cleaned.startsWith('//')) cleaned = 'https:' + cleaned;
+              if (!cleaned.startsWith('http')) cleaned = 'https://www.zhihu.com' + (cleaned.startsWith('/') ? '' : '/') + cleaned;
 
-    results.push({
-      title: title.replace(/\n/g, ' ').replace(/\s+/g, ' ').substring(0, 120),
-      excerpt: excerpt || '无简介',
-      link,
-      hot: '热榜'
+              var article = cleaned.match(/^https:\/\/api\.zhihu\.com\/articles\/(\d+)(?:\/)?$/);
+              if (article) return 'https://zhuanlan.zhihu.com/p/' + article[1];
+              var question = cleaned.match(/^https:\/\/api\.zhihu\.com\/questions\/(\d+)(?:\/)?$/);
+              if (question) return 'https://www.zhihu.com/question/' + question[1];
+              var answer = cleaned.match(/^https:\/\/api\.zhihu\.com\/answers\/(\d+)(?:\/)?$/);
+              if (answer) return 'https://www.zhihu.com/answer/' + answer[1];
+              var zvideo = cleaned.match(/^https:\/\/api\.zhihu\.com\/zvideos\/(\d+)(?:\/)?$/);
+              if (zvideo) return 'https://www.zhihu.com/zvideo/' + zvideo[1];
+              return cleaned;
+            }
+
+            function text (el) {
+              if (!el) return '';
+              return String(el.innerText || '').trim();
+            }
+
+            function compact (s, n) {
+              return String(s || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().substring(0, n);
+            }
+
+            if (detectBlockedInPage()) return { blocked: true, items: [] };
+
+            var cards = document.querySelectorAll('.TopstoryItem, .Feed, .Card, .ContentItem');
+            var items = [];
+            var seen = {};
+            var max = typeof lim === 'number' && lim > 0 ? lim : 40;
+
+            for (var i = 0; i < cards.length && items.length < max; i++) {
+              var card = cards[i];
+              var titleEl = card.querySelector('.ContentItem-title, h2, h3');
+              var a = titleEl ? titleEl.querySelector('a') : null;
+              if (!a) a = card.querySelector('a[href*="/question/"], a[href*="/p/"], a[href*="/zvideo/"]');
+              if (!a) continue;
+
+              var href = a.getAttribute('href') || '';
+              var link = normalizeLinkInPage(href);
+              if (!link || seen[link]) continue;
+
+              var titleText = titleEl ? text(titleEl) : text(a);
+              titleText = compact(titleText, 120);
+              if (!titleText) continue;
+
+              var excerptEl = card.querySelector('.RichContent-inner, .ContentItem-meta .RichText, .RichText, .RichContent');
+              var excerptText = compact(text(excerptEl), 180) || '无简介';
+
+              seen[link] = true;
+              items.push({ title: titleText, excerpt: excerptText, link: link, hot: '推荐' });
+            }
+
+            if (detectBlockedInPage()) return { blocked: true, items: [] };
+            return { blocked: false, items: items };
+          },
+          args: [typeof limit === 'number' ? limit : 40]
+        }, function (injectionResults) {
+          let blocked = false;
+          let items = [];
+          if (injectionResults && injectionResults[0]) {
+            const r = injectionResults[0].result;
+            if (r && typeof r === 'object' && Array.isArray(r.items)) {
+              blocked = !!r.blocked;
+              items = r.items || [];
+            } else if (Array.isArray(r)) {
+              items = r;
+            }
+          }
+
+          chrome.tabs.remove(tab.id);
+          if (blocked) {
+            resolve([]);
+            return;
+          }
+          resolve(Array.isArray(items) ? items : []);
+        });
+      }).catch(() => {
+        chrome.tabs.remove(tab.id);
+        resolve([]);
+      });
     });
-  }
-  return results;
+  });
 }
 
 async function collectXData (keywords) {
