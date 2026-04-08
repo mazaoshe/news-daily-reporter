@@ -295,8 +295,7 @@ function setCooldown (source, ms) {
   const until = now + (typeof ms === 'number' && ms > 0 ? ms : CONFIG.COOLDOWN_MS);
   const map = settings.sourceCooldownUntil || {};
   map[source] = until;
-  settings.sourceCooldownUntil = map;
-  chrome.storage.local.set({ settings });
+  setSettings({ sourceCooldownUntil: map });
 }
 
 function detectBlockedText (text) {
@@ -324,8 +323,7 @@ async function generateDailyReport (opts) {
   console.log('[每日运营] 开始生成日报，ID:', execId);
 
   const trigger = opts && opts.trigger ? String(opts.trigger) : 'unknown';
-  await setSettings({ lastAttemptTime: Date.now(), sourceCooldownUntil: {} });
-  chrome.storage.local.set({ settings });
+  await setSettings({ lastAttemptTime: Date.now() });
 
   try {
     // 1. 收集所有数据（保留平台标识）
@@ -355,6 +353,16 @@ async function generateDailyReport (opts) {
       groupedBySource[source].push(item);
     });
 
+    const enabled = settings.sources || { zhihu: true, x: false, reddit: false };
+    const zhihuCount = groupedBySource.zhihu ? groupedBySource.zhihu.length : 0;
+    const xCount = groupedBySource.x ? groupedBySource.x.length : 0;
+    const redditCount = groupedBySource.reddit ? groupedBySource.reddit.length : 0;
+    const statParts = [];
+    if (enabled.zhihu !== false) statParts.push('知乎 ' + zhihuCount);
+    if (enabled.x) statParts.push('X ' + xCount);
+    if (enabled.reddit) statParts.push('Reddit ' + redditCount);
+    const statsLine = statParts.length ? ('📦 采集统计: ' + statParts.join(' | ')) : '';
+
     // 4. 遍历每个平台，单独生成并发送报告
     const sources = Object.keys(groupedBySource);
     for (const source of sources) {
@@ -379,6 +387,8 @@ async function generateDailyReport (opts) {
       } else {
         report = generateSimpleReport(selectedItems, source);
       }
+
+      if (statsLine) report = statsLine + '\n\n' + report;
 
       // 7. 发送到 Telegram（每个平台单独发送）
       try {
@@ -458,32 +468,14 @@ async function collectAllData () {
 }
 
 async function collectRedditData () {
-  let allResults = [];
-  let penalty = 1.6;
-
-  const useSubscriptions = settings.redditUseSubscriptions !== false;
-  const configuredSubs = Array.isArray(settings.redditSubreddits) ? settings.redditSubreddits : [];
-  const subs = await getRedditSubreddits(useSubscriptions, configuredSubs);
-
-  if (subs.length === 0) return [];
-
-  const limitedSubs = subs.slice(0, CONFIG.MAX_REDDIT_SUBS);
-  for (let i = 0; i < limitedSubs.length; i++) {
-    const sub = limitedSubs[i];
-    console.log('[采][Reddit] r/' + sub + ' hot');
-    try {
-      const posts = await fetchRedditHot(sub, CONFIG.MAX_REDDIT_POSTS_PER_SUB);
-      if (posts.length === 0) penalty = Math.min(4, penalty + 0.75);
-      else penalty = Math.max(1.2, penalty - 0.2);
-      allResults = allResults.concat(posts.map(p => ({ ...p, source: 'reddit', hot: 'r/' + sub })));
-    } catch (e) {
-      penalty = Math.min(4, penalty + 1);
-      console.error('[采][Reddit] 失败:', sub, e);
-    }
-    await throttledDelay(penalty);
+  console.log('[采][Reddit] best');
+  try {
+    const posts = await fetchRedditBest(30);
+    return posts.map(p => ({ ...p, source: 'reddit', hot: 'best' }));
+  } catch (e) {
+    console.error('[采][Reddit] 失败:', e);
+    return [];
   }
-
-  return allResults;
 }
 
 async function getRedditSubreddits (useSubscriptions, configuredSubs) {
@@ -609,6 +601,43 @@ async function fetchRedditHot (subreddit, limit) {
   return results;
 }
 
+async function fetchRedditBest (limit) {
+  const lim = typeof limit === 'number' && limit > 0 ? limit : 30;
+  const url = 'https://www.reddit.com/best.json?limit=' + lim + '&raw_json=1';
+  const resp = await fetch(url, { method: 'GET', credentials: 'include' });
+  if (resp.status === 429 || resp.status === 403) {
+    setCooldown('reddit', CONFIG.COOLDOWN_MS);
+    throw new Error('Reddit访问受限: ' + resp.status);
+  }
+  const json = await resp.json();
+  const children = json && json.data && Array.isArray(json.data.children) ? json.data.children : [];
+
+  const results = [];
+  const seen = new Set();
+  for (const child of children) {
+    const d = child && child.data ? child.data : null;
+    if (!d) continue;
+    const title = String(d.title || '').trim();
+    const permalink = String(d.permalink || '').trim();
+    if (!title || !permalink) continue;
+    const link = 'https://www.reddit.com' + permalink;
+    if (seen.has(link)) continue;
+    seen.add(link);
+
+    const selftext = String(d.selftext || '').trim();
+    let excerpt = selftext ? selftext : (String(d.url || '').trim() || '无简介');
+    excerpt = excerpt.replace(/\n/g, ' ').replace(/\s+/g, ' ').substring(0, 180);
+
+    results.push({
+      title: title.substring(0, 120),
+      excerpt,
+      link
+    });
+  }
+
+  return results;
+}
+
 async function collectZhihuData (keywords) {
   let allResults = [];
   const queries = pickSearchQueries(keywords).slice(0, CONFIG.MAX_ZHIHU_QUERIES);
@@ -634,7 +663,63 @@ async function collectZhihuData (keywords) {
     await throttledDelay(penalty);
   }
 
+  if (allResults.length === 0) {
+    try {
+      const hot = await fetchZhihuHotlist(60);
+      const kw = Array.isArray(keywords) ? keywords.map(k => String(k || '').trim()).filter(Boolean) : [];
+      if (kw.length === 0) return hot.map(r => ({ ...r, source: 'zhihu' }));
+
+      const lowered = kw.map(k => k.toLowerCase());
+      const filtered = hot.filter((it) => {
+        const hay = (String(it.title || '') + ' ' + String(it.excerpt || '')).toLowerCase();
+        for (const k of lowered) {
+          if (k && hay.includes(k)) return true;
+        }
+        return false;
+      });
+      return (filtered.length > 0 ? filtered : hot).map(r => ({ ...r, source: 'zhihu' }));
+    } catch (e) {
+      return [];
+    }
+  }
+
   return allResults;
+}
+
+async function fetchZhihuHotlist (limit) {
+  const lim = typeof limit === 'number' && limit > 0 ? limit : 50;
+  const url = 'https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=' + lim + '&desktop=true';
+  const resp = await fetch(url, { method: 'GET', credentials: 'include' });
+  if (resp.status === 429 || resp.status === 403) {
+    setCooldown('zhihu', CONFIG.COOLDOWN_MS);
+    throw new Error('知乎访问受限: ' + resp.status);
+  }
+  const json = await resp.json();
+  const data = json && Array.isArray(json.data) ? json.data : [];
+
+  const results = [];
+  const seen = new Set();
+  for (const entry of data) {
+    const target = entry && entry.target ? entry.target : null;
+    if (!target) continue;
+    const title = String(target.title || target.name || '').trim();
+    if (!title) continue;
+    const link = normalizeLink(String(target.url || '').trim());
+    if (!link) continue;
+    if (seen.has(link)) continue;
+    seen.add(link);
+
+    let excerpt = String(target.excerpt || target.excerpt_new || target.description || '').trim();
+    excerpt = excerpt.replace(/\n/g, ' ').replace(/\s+/g, ' ').substring(0, 180);
+
+    results.push({
+      title: title.replace(/\n/g, ' ').replace(/\s+/g, ' ').substring(0, 120),
+      excerpt: excerpt || '无简介',
+      link,
+      hot: '热榜'
+    });
+  }
+  return results;
 }
 
 async function collectXData (keywords) {
