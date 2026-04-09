@@ -392,6 +392,7 @@ async function generateDailyReport (opts) {
 
       // 7. 发送到 Telegram（每个平台单独发送）
       try {
+        report = postFormatTelegramReport(report, source);
         await sendToTelegram(report);
         console.log(`[每日运营][${source}] 发送成功`);
       } catch (e) {
@@ -416,6 +417,132 @@ async function generateDailyReport (opts) {
     isRunning = false;
     scheduleTask();
   }
+}
+
+function postFormatTelegramReport (text, source) {
+  const raw = String(text || '').trim();
+  if (!raw) return raw;
+
+  const braceIndex = raw.indexOf('{');
+  if (braceIndex < 0) return raw;
+
+  const prefix = raw.slice(0, braceIndex).trim();
+  const jsonText = raw.slice(braceIndex);
+  const parsed = tryParseReportJson(jsonText);
+  if (!parsed || !Array.isArray(parsed.items)) return raw;
+
+  const sourceTopics = settings.platformKeywords?.[source];
+  const topics = (sourceTopics && Array.isArray(sourceTopics) ? sourceTopics : settings.topics)?.join('、') || 'AI、科技';
+  const sourceLabel = source === 'all' ? '多平台汇总' : (source === 'zhihu' ? '知乎' : source === 'x' ? 'X' : source === 'reddit' ? 'Reddit' : String(source || '').toUpperCase());
+  const header = '📊 每日运营日报 - ' + sourceLabel + '\n📌 关注：' + topics + '\n📅 ' + new Date().toLocaleDateString('zh-CN') + '\n\n━━━━━━━━━━━━━\n\n';
+
+  const seen = new Set();
+  let items = parsed.items
+    .map(function (x) {
+      const title = String(x?.title || '').trim();
+      const intro = String(x?.intro || '').trim();
+      const link = normalizeLink(String(x?.link || '').trim());
+      return { title, intro, link };
+    })
+    .filter(function (x) { return x.title && x.link; })
+    .filter(function (x) {
+      if (seen.has(x.link)) return false;
+      seen.add(x.link);
+      return true;
+    });
+
+  if (items.length > 10) items = items.slice(0, 10);
+
+  let body = '';
+  items.forEach(function (it, idx) {
+    body += '【' + (idx + 1) + '】' + it.title + '\n';
+    body += '简介：' + (it.intro || '无简介') + '\n';
+    body += '链接：' + it.link + '\n\n';
+  });
+
+  const summary = String(parsed.summary || '').trim();
+  if (summary) body += '总结：' + summary;
+
+  const finalReport = header + body.trim();
+  if (!prefix) return finalReport;
+  if (prefix.includes('📊 每日运营日报')) {
+    const trimmedPrefix = prefix.replace(/\s+$/, '');
+    if (trimmedPrefix.endsWith('━━━━━━━━━━━━━')) return trimmedPrefix + '\n\n' + body.trim();
+    if (trimmedPrefix.includes('━━━━━━━━━━━━━')) return trimmedPrefix + '\n\n' + body.trim();
+    return trimmedPrefix + '\n\n' + body.trim();
+  }
+
+  return prefix + '\n\n' + finalReport;
+}
+
+function tryParseReportJson (rawText) {
+  function stripFences (s) {
+    return String(s || '')
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```$/i, '')
+      .trim();
+  }
+
+  function removeTrailingCommas (s) {
+    return String(s || '').replace(/,\s*([}\]])/g, '$1');
+  }
+
+  function findBalanced (s, openChar, closeChar, startIdx) {
+    var i = typeof startIdx === 'number' ? startIdx : 0;
+    var depth = 0;
+    var inStr = false;
+    var esc = false;
+    for (; i < s.length; i++) {
+      var ch = s[i];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === openChar) depth++;
+      if (ch === closeChar) {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  }
+
+  var cleaned = stripFences(rawText);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {}
+
+  var objStart = cleaned.indexOf('{');
+  if (objStart >= 0) {
+    var objEnd = findBalanced(cleaned, '{', '}', objStart);
+    if (objEnd > objStart) {
+      var objText = cleaned.slice(objStart, objEnd + 1);
+      try {
+        return JSON.parse(removeTrailingCommas(objText));
+      } catch (e) {}
+    }
+  }
+
+  var itemsMatch = cleaned.match(/"items"\s*:\s*\[/);
+  if (itemsMatch) {
+    var itemsStart = cleaned.indexOf('[', itemsMatch.index);
+    if (itemsStart >= 0) {
+      var itemsEnd = findBalanced(cleaned, '[', ']', itemsStart);
+      if (itemsEnd > itemsStart) {
+        var arrText = cleaned.slice(itemsStart, itemsEnd + 1);
+        try {
+          var arr = JSON.parse(removeTrailingCommas(arrText));
+          return { items: Array.isArray(arr) ? arr : [], summary: '' };
+        } catch (e) {}
+      }
+    }
+  }
+
+  return null;
 }
 
 async function collectAllData () {
