@@ -928,30 +928,18 @@ async function scrapeZhihuRecommendFromHome (limit) {
 }
 
 async function collectXData (keywords) {
-  let allResults = [];
-  const queries = pickSearchQueries(keywords).slice(0, CONFIG.MAX_X_QUERIES);
-  let penalty = 1.5;
-
-  for (let i = 0; i < queries.length; i++) {
-    const q = queries[i];
-    console.log('[采][X] 搜索:', q);
-    try {
-      const results = await scrapeXSearch(q);
-      if (results && results._blocked) {
-        setCooldown('x', CONFIG.COOLDOWN_MS);
-        break;
-      }
-      if (results.length === 0) penalty = Math.min(4, penalty + 0.75);
-      else penalty = Math.max(1.2, penalty - 0.25);
-      allResults = allResults.concat(results.map(r => ({ ...r, source: 'x' })));
-    } catch (e) {
-      penalty = Math.min(4, penalty + 1);
-      console.error('[采][X] 失败:', q, e);
+  console.log('[采][X] 关注时间线');
+  try {
+    const results = await scrapeXFollowingFeed(40);
+    if (results && results._blocked) {
+      setCooldown('x', CONFIG.COOLDOWN_MS);
+      return [];
     }
-    await throttledDelay(penalty);
+    return (results || []).map(r => ({ ...r, source: 'x' }));
+  } catch (e) {
+    console.error('[采][X] 失败:', e);
+    return [];
   }
-
-  return allResults;
 }
 
 async function scrapeZhihuSearch (keyword, offsets) {
@@ -1262,6 +1250,143 @@ async function scrapeXSearch (keyword) {
           chrome.tabs.remove(tab.id);
           if (blocked) {
             rawData._blocked = true;
+          }
+          resolve(rawData);
+        });
+      }).catch(() => {
+        chrome.tabs.remove(tab.id);
+        resolve([]);
+      });
+    });
+  });
+}
+
+async function scrapeXFollowingFeed (limit) {
+  return new Promise((resolve) => {
+    const homeUrl = 'https://x.com/home';
+    chrome.tabs.create({ url: homeUrl, active: false }, (tab) => {
+      if (chrome.runtime.lastError) {
+        console.error('[采][X] 错误:', chrome.runtime.lastError.message);
+        resolve([]);
+        return;
+      }
+
+      waitForTabComplete(tab.id, 25000).then(() => {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: async function (lim) {
+            function normalizeXLink (href) {
+              if (!href) return '';
+              var raw = String(href || '').trim().replace(/^['"`]+|['"`]+$/g, '');
+              var cleaned = raw.split('?')[0].split('#')[0].replace(/^http:\/\//, 'https://');
+              if (cleaned.startsWith('/')) cleaned = 'https://x.com' + cleaned;
+              if (cleaned.startsWith('//')) cleaned = 'https:' + cleaned;
+              cleaned = cleaned.replace(/^https:\/\/twitter\.com\//, 'https://x.com/');
+              return cleaned;
+            }
+
+            function getText (el) {
+              if (!el) return '';
+              return String(el.innerText || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+            }
+
+            function isBlockedPage () {
+              var t = String(document.body && document.body.innerText || '');
+              var title = String(document.title || '');
+              return (
+                t.includes('Something went wrong') ||
+                t.toLowerCase().includes('rate limit') ||
+                t.toLowerCase().includes('unusual')
+              );
+            }
+
+            function isLoginPage () {
+              var t = String(document.body && document.body.innerText || '');
+              var title = String(document.title || '');
+              if (title.toLowerCase().includes('log in')) return true;
+              if (t.toLowerCase().includes('log in') && t.toLowerCase().includes('sign up')) return true;
+              if (t.includes('登录') && t.includes('注册')) return true;
+              if (location && String(location.pathname || '').includes('/i/flow/login')) return true;
+              return false;
+            }
+
+            async function clickFollowingTab () {
+              var tabs = document.querySelectorAll('[role="tab"]');
+              for (var i = 0; i < tabs.length; i++) {
+                var text = getText(tabs[i]);
+                if (!text) continue;
+                if (text.includes('Following') || text.includes('正在关注')) {
+                  tabs[i].click();
+                  await new Promise(function (r) { setTimeout(r, 1200); });
+                  return true;
+                }
+              }
+              return false;
+            }
+
+            if (isBlockedPage()) return { blocked: true, login: false, items: [] };
+            if (isLoginPage()) return { blocked: false, login: true, items: [] };
+
+            await clickFollowingTab();
+
+            var results = [];
+            var seen = {};
+            var max = typeof lim === 'number' && lim > 0 ? lim : 40;
+
+            for (var s = 0; s < 7; s++) {
+              window.scrollTo(0, document.body.scrollHeight);
+              await new Promise(function (r) { setTimeout(r, 700); });
+            }
+
+            var tweets = document.querySelectorAll('article[data-testid="tweet"]');
+            for (var j = 0; j < tweets.length && results.length < max; j++) {
+              var tweet = tweets[j];
+              var linkEl = tweet.querySelector('a[href*="/status/"]');
+              if (!linkEl) continue;
+
+              var href = normalizeXLink(linkEl.getAttribute('href'));
+              if (!href) continue;
+              if (seen[href]) continue;
+              seen[href] = true;
+
+              var textEl = tweet.querySelector('div[data-testid="tweetText"]');
+              var text = getText(textEl);
+              if (!text) continue;
+
+              results.push({
+                title: text.substring(0, 80),
+                excerpt: text.substring(0, 180),
+                link: href,
+                hot: '关注时间线'
+              });
+            }
+
+            if (isBlockedPage()) return { blocked: true, login: false, items: [] };
+            return { blocked: false, login: false, items: results };
+          },
+          args: [typeof limit === 'number' ? limit : 40]
+        }, function (injectionResults) {
+          var rawData = [];
+          var blocked = false;
+          var login = false;
+          if (injectionResults && injectionResults[0]) {
+            const result = injectionResults[0].result;
+            if (result && typeof result === 'object' && Array.isArray(result.items)) {
+              rawData = result.items || [];
+              blocked = !!result.blocked;
+              login = !!result.login;
+            } else {
+              rawData = result || [];
+            }
+          }
+
+          chrome.tabs.remove(tab.id);
+          if (blocked) {
+            rawData._blocked = true;
+          }
+          if (login) {
+            resolve([]);
+            return;
           }
           resolve(rawData);
         });
